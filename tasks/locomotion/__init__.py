@@ -18,16 +18,7 @@ class T1WalkControllerCfg1(T1WalkControllerCfg):
 
 @configclass
 class K1WalkControllerCfg1(K1WalkControllerCfg):
-    """Velocity-commanded walk for K1 robot."""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.policy.checkpoint_path = "models/k1_locomotion.pt"
-
-
-@configclass
-class K1WalkCurrentTrainControllerCfg(K1WalkControllerCfg):
-    """K1 walk using the actuator profile from the current Isaac Lab training."""
+    """Velocity-commanded walk for K1 using the current training actuator profile."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -60,6 +51,5 @@ class K1WalkCurrentTrainControllerCfg(K1WalkControllerCfg):
 
 
 register_task("k1_walk", K1WalkControllerCfg1())
-register_task("k1_walk_current_train", K1WalkCurrentTrainControllerCfg())
 register_task(
     "t1_walk", T1WalkControllerCfg1())
