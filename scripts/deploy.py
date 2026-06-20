@@ -19,6 +19,9 @@ parser.add_argument("--webots", action="store_true", default=False,
 parser.add_argument(
     "--device", type=str, default="cpu",
     help="Device to run the evaluation on (e.g., 'cpu', 'cuda')")
+parser.add_argument(
+    "--checkpoint", type=str, default=None,
+    help="Optional TorchScript policy path. Overrides the task checkpoint.")
 args = parser.parse_args()
 
 
@@ -52,6 +55,8 @@ def main():
 
     # Set device for policy
     task_cfg.policy.device = args.device
+    if args.checkpoint is not None:
+        task_cfg.policy.checkpoint_path = args.checkpoint
 
     # decide how to run based on flags
     if args.mujoco:

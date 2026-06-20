@@ -21,12 +21,28 @@ class MujocoController(BaseController):
         self.decimation = self.cfg.mujoco.decimation
         self.mj_data = mujoco.MjData(self.mj_model)
         mujoco.mj_resetData(self.mj_model, self.mj_data)
+        self._body_ids = [
+            mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in self.robot.cfg.sim_body_names
+        ]
+        missing_bodies = [name for name, body_id in zip(self.robot.cfg.sim_body_names, self._body_ids) if body_id < 0]
+        if missing_bodies:
+            raise ValueError(f"MuJoCo model is missing robot bodies required by deployment state: {missing_bodies}")
+
+        init_joint_pos = self.robot.default_joint_pos.numpy()
+        if self.cfg.mujoco.init_joint_pos is not None:
+            init_joint_pos = np.array(self.cfg.mujoco.init_joint_pos, dtype=np.float32)
+            if init_joint_pos.shape != self.robot.default_joint_pos.numpy().shape:
+                raise ValueError(
+                    "mujoco.init_joint_pos must match robot default_joint_pos shape, "
+                    f"got {init_joint_pos.shape}, expected {self.robot.default_joint_pos.numpy().shape}"
+                )
 
         self.mj_data.qpos = np.concatenate(
             [
                 np.array(self.cfg.mujoco.init_pos, dtype=np.float32),
                 np.array(self.cfg.mujoco.init_quat, dtype=np.float32),
-                self.robot.default_joint_pos.numpy(),
+                init_joint_pos,
             ]
         )
         mujoco.mj_forward(self.mj_model, self.mj_data)
@@ -117,7 +133,10 @@ class MujocoController(BaseController):
         cmd: VelocityCommand = self.vel_command
         if select.select([sys.stdin], [], [], 0)[0]:
             try:
-                parts = sys.stdin.readline().strip().split()
+                line = sys.stdin.readline()
+                if line == "":
+                    return
+                parts = line.strip().split()
                 if len(parts) == 3:
                     (cmd.lin_vel_x, cmd.lin_vel_y, cmd.ang_vel_yaw) = map(float, parts)
                     print(
@@ -144,6 +163,8 @@ class MujocoController(BaseController):
         base_quat = self.mj_data.qpos.astype(np.float32)[3:7]
         base_lin_vel_b = self.mj_data.qvel.astype(np.float32)[:3]
         base_ang_vel_b = self.mj_data.qvel.astype(np.float32)[3:6]
+        body_pos_w = self.mj_data.xpos[self._body_ids].astype(np.float32)
+        body_lin_vel_w = self.mj_data.cvel[self._body_ids, 3:6].astype(np.float32)
 
         self.robot.data.joint_pos = torch.from_numpy(
             dof_pos).to(self.robot.data.device)
@@ -159,6 +180,10 @@ class MujocoController(BaseController):
             base_lin_vel_b).to(self.robot.data.device)
         self.robot.data.root_ang_vel_b = torch.from_numpy(
             base_ang_vel_b).to(self.robot.data.device)
+        self.robot.data.body_pos_w = torch.from_numpy(
+            body_pos_w).to(self.robot.data.device)
+        self.robot.data.body_lin_vel_w = torch.from_numpy(
+            body_lin_vel_w).to(self.robot.data.device)
 
     def log_states(self, dof_targets: np.ndarray) -> None:
         if self.cfg.mujoco.log_states is not None:

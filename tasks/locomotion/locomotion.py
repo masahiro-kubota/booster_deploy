@@ -32,7 +32,7 @@ class LocomotionPolicy(Policy):
 
         # Observation and action parameters
         self.actor_obs_history_length = cfg.actor_obs_history_length
-        self.action_scale = cfg.action_scale
+        self.action_scale = torch.as_tensor(cfg.action_scale, dtype=torch.float32)
 
         # Initialize buffers
         self.obs_history = None
@@ -139,7 +139,7 @@ class LocomotionPolicyCfg(PolicyCfg):
     constructor = LocomotionPolicy
     checkpoint_path: str = MISSING  # type: ignore
     actor_obs_history_length: int = 10
-    action_scale: float = 0.25
+    action_scale: float | list[float] = 0.25
     obs_dof_vel_scale: float = 1.0
     policy_joint_names: list[str] = MISSING  # type: ignore
 

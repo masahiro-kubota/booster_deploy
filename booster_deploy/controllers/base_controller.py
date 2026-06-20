@@ -22,10 +22,13 @@ class RobotData:
     root_quat_w: torch.Tensor
     root_lin_vel_b: torch.Tensor
     root_ang_vel_b: torch.Tensor
+    body_pos_w: torch.Tensor
+    body_lin_vel_w: torch.Tensor
 
     def __init__(self, cfg: RobotCfg) -> None:
         self.cfg = cfg
         num_joints = len(self.cfg.joint_names)
+        num_bodies = len(self.cfg.sim_body_names or self.cfg.body_names)
         self.real2sim_joint_indexes = [cfg.joint_names.index(name) for name in cfg.sim_joint_names]
         self.sim2real_joint_indexes = [cfg.sim_joint_names.index(name) for name in cfg.joint_names]
         self.device = "cpu"
@@ -37,6 +40,9 @@ class RobotData:
         self.root_ang_vel_b: torch.Tensor = torch.zeros(3, dtype=torch.float32)
         self.root_pos_w: torch.Tensor = torch.zeros(3, dtype=torch.float32)
         self.root_quat_w: torch.Tensor = torch.zeros(4, dtype=torch.float32)
+        self.root_quat_w[0] = 1.0
+        self.body_pos_w: torch.Tensor = torch.zeros(num_bodies, 3, dtype=torch.float32)
+        self.body_lin_vel_w: torch.Tensor = torch.zeros(num_bodies, 3, dtype=torch.float32)
 
     def to(self, device: torch.device | str) -> None:
         self.device = device
@@ -47,6 +53,8 @@ class RobotData:
         self.root_ang_vel_b = self.root_ang_vel_b.to(device)
         self.root_pos_w = self.root_pos_w.to(device)
         self.root_quat_w = self.root_quat_w.to(device)
+        self.body_pos_w = self.body_pos_w.to(device)
+        self.body_lin_vel_w = self.body_lin_vel_w.to(device)
 
 
 class BoosterRobot:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 from dataclasses import MISSING
+import json
 import os
 import inspect
+import re
 import torch
 
 from booster_deploy.controllers.base_controller import BaseController, Policy
@@ -16,12 +18,23 @@ from booster_deploy.utils.isaaclab import math as lab_math
 from booster_deploy.utils.motion_loader import MotionLoader
 
 
+def _resolve_task_file(task_path: str, path: str) -> str:
+    if os.path.isabs(path):
+        return path
+    return os.path.join(task_path, path)
+
+
+def _default_manifest_path(checkpoint_path: str) -> str:
+    stem, _ = os.path.splitext(checkpoint_path)
+    return f"{stem}.manifest.json"
+
+
 class BeyondMimicPolicy(Policy):
     def __init__(self, cfg: BeyondMimicPolicyCfg, controller: BaseController):
         super().__init__(cfg, controller)
         self.cfg = cfg
-        self._model: torch.jit.ScriptModule = torch.jit.load(
-            f"{self.task_path}/{self.cfg.checkpoint_path}")
+        checkpoint_path = _resolve_task_file(self.task_path, self.cfg.checkpoint_path)
+        self._model: torch.jit.ScriptModule = torch.jit.load(checkpoint_path)
         self._model.to(self.cfg.device).eval()
 
         self.robot = controller.robot
@@ -29,11 +42,13 @@ class BeyondMimicPolicy(Policy):
         self.action_scale = (
             0.25 * self.robot.effort_limit / self.robot.joint_stiffness
         ).to(self.cfg.device)
+        self._check_manifest(checkpoint_path)
 
         self.robot.data.to(self.cfg.device)
 
+        motion_file = _resolve_task_file(self.task_path, self.cfg.motion_path)
         self.motion = MotionLoader(
-            motion_file=f"{self.task_path}/{self.cfg.motion_path}",
+            motion_file=motion_file,
             track_body_names=[self.cfg.anchor_body_name],
             track_joint_names=self.robot.cfg.sim_joint_names,
             default_motion_body_names=self.robot.cfg.sim_body_names,
@@ -44,6 +59,69 @@ class BeyondMimicPolicy(Policy):
 
         self.default_joint_pos = self.robot.default_joint_pos.to(
             self.cfg.device)
+
+    def _check_manifest(self, checkpoint_path: str) -> None:
+        manifest_path = self.cfg.manifest_path
+        if manifest_path is None:
+            manifest_path = _default_manifest_path(checkpoint_path)
+        else:
+            manifest_path = _resolve_task_file(self.task_path, manifest_path)
+
+        if not os.path.isfile(manifest_path):
+            return
+
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        self._check_manifest_action_scale(manifest, manifest_path)
+        self._check_manifest_motion(manifest, manifest_path)
+
+    def _check_manifest_action_scale(self, manifest: dict, manifest_path: str) -> None:
+        manifest_scale = manifest.get("action_scale")
+        if not isinstance(manifest_scale, dict):
+            return
+
+        expected_scale = []
+        for joint_name in self.robot.cfg.joint_names:
+            scale = None
+            for joint_pattern, value in manifest_scale.items():
+                if re.fullmatch(joint_pattern, joint_name):
+                    scale = float(value)
+                    break
+            if scale is None:
+                return
+            expected_scale.append(scale)
+
+        expected_scale_tensor = torch.tensor(expected_scale, dtype=torch.float32, device=self.cfg.device)
+        scale_error = torch.abs(expected_scale_tensor - self.action_scale)
+        max_error = float(torch.max(scale_error).item())
+        if max_error <= 1.0e-4:
+            return
+
+        worst_index = int(torch.argmax(scale_error).item())
+        print(
+            "[WARN] Policy manifest action_scale differs from deploy config: "
+            f"manifest={manifest_path}, joint={self.robot.cfg.joint_names[worst_index]}, "
+            f"manifest_scale={float(expected_scale_tensor[worst_index].item()):.6f}, "
+            f"deploy_scale={float(self.action_scale[worst_index].item()):.6f}, "
+            f"max_abs_error={max_error:.6f}"
+        )
+
+    def _check_manifest_motion(self, manifest: dict, manifest_path: str) -> None:
+        manifest_motion = manifest.get("motion_file")
+        if not isinstance(manifest_motion, str):
+            return
+
+        manifest_motion_name = os.path.basename(manifest_motion)
+        deploy_motion_name = os.path.basename(self.cfg.motion_path)
+        if manifest_motion_name == deploy_motion_name:
+            return
+
+        print(
+            "[WARN] Policy manifest motion file differs from deploy config: "
+            f"manifest={manifest_path}, manifest_motion={manifest_motion_name}, "
+            f"deploy_motion={deploy_motion_name}"
+        )
 
     def reset(self) -> None:
         self.init_root_yaw_quat_w_inv = lab_math.quat_inv(
@@ -57,7 +135,10 @@ class BeyondMimicPolicy(Policy):
         self.motion.to(self.cfg.device)
 
     def _set_command(self):
-        row_ids = min(self.current_frame, self.motion.time_step_total - 1)
+        if self.cfg.loop_motion:
+            row_ids = self.current_frame % self.motion.time_step_total
+        else:
+            row_ids = min(self.current_frame, self.motion.time_step_total - 1)
 
         self.cmd_dof_pos = self.motion.joint_pos[row_ids]
         self.cmd_dof_vel = self.motion.joint_vel[row_ids]
@@ -161,6 +242,8 @@ class BeyondMimicPolicyCfg(PolicyCfg):
     constructor = BeyondMimicPolicy
     checkpoint_path: str = MISSING
     motion_path: str = MISSING
+    manifest_path: str | None = None
+    loop_motion: bool = False
 
     anchor_body_name: str = "Trunk"
 

@@ -1,6 +1,8 @@
 # Task-specific models and data (stored per robot/task)
 tasks/*/models/
 tasks/*/motions/
+logs/
+MUJOCO_LOG.TXT
 
 .DS_Store
 
@@ -9,5 +11,3 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-

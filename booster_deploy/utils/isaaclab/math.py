@@ -13,7 +13,7 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional
-from typing import Literal
+from typing import Literal, Optional, Tuple
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -115,10 +115,10 @@ def wrap_to_pi(angles: torch.Tensor) -> torch.Tensor:
         Angles in the range :math:`[-\pi, \pi]`.
     """
     # wrap to [0, 2*pi)
-    wrapped_angle = (angles + torch.pi) % (2 * torch.pi)
+    wrapped_angle = (angles + math.pi) % (2 * math.pi)
     # map to [-pi, pi]
     # we check for zero in wrapped angle to make it go to pi when input angle is odd multiple of pi
-    return torch.where((wrapped_angle == 0) & (angles > 0), torch.pi, wrapped_angle - torch.pi)
+    return torch.where((wrapped_angle == 0) & (angles > 0), torch.tensor(math.pi, device=angles.device), wrapped_angle - math.pi)
 
 
 @torch.jit.script
@@ -434,7 +434,7 @@ def matrix_from_euler(euler_angles: torch.Tensor, convention: str) -> torch.Tens
 @torch.jit.script
 def euler_xyz_from_quat(
     quat: torch.Tensor, wrap_to_2pi: bool = False
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert rotations given as quaternions to Euler angles in radians.
 
     Note:
@@ -460,7 +460,7 @@ def euler_xyz_from_quat(
 
     # pitch (y-axis rotation)
     sin_pitch = 2.0 * (q_w * q_y - q_z * q_x)
-    pitch = torch.where(torch.abs(sin_pitch) >= 1, copysign(torch.pi / 2.0, sin_pitch), torch.asin(sin_pitch))
+    pitch = torch.where(torch.abs(sin_pitch) >= 1, copysign(math.pi / 2.0, sin_pitch), torch.asin(sin_pitch))
 
     # yaw (z-axis rotation)
     sin_yaw = 2.0 * (q_w * q_z + q_x * q_y)
@@ -468,7 +468,7 @@ def euler_xyz_from_quat(
     yaw = torch.atan2(sin_yaw, cos_yaw)
 
     if wrap_to_2pi:
-        return roll % (2 * torch.pi), pitch % (2 * torch.pi), yaw % (2 * torch.pi)
+        return roll % (2 * math.pi), pitch % (2 * math.pi), yaw % (2 * math.pi)
     return roll, pitch, yaw
 
 
@@ -797,8 +797,8 @@ def is_identity_pose(pos: torch.tensor, rot: torch.tensor) -> bool:
 
 @torch.jit.script
 def combine_frame_transforms(
-    t01: torch.Tensor, q01: torch.Tensor, t12: torch.Tensor | None = None, q12: torch.Tensor | None = None
-) -> tuple[torch.Tensor, torch.Tensor]:
+    t01: torch.Tensor, q01: torch.Tensor, t12: Optional[torch.Tensor] = None, q12: Optional[torch.Tensor] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
     r"""Combine transformations between two reference frames into a stationary frame.
 
     It performs the following transformation operation: :math:`T_{02} = T_{01} \times T_{12}`,
@@ -958,7 +958,7 @@ def compute_pose_error(
 @torch.jit.script
 def apply_delta_pose(
     source_pos: torch.Tensor, source_rot: torch.Tensor, delta_pose: torch.Tensor, eps: float = 1.0e-6
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Applies delta pose transformation on source pose.
 
     The first three elements of `delta_pose` are interpreted as cartesian position displacement.
@@ -983,7 +983,7 @@ def apply_delta_pose(
     target_pos = source_pos + delta_pose[:, 0:3]
     # interpret delta_pose[:, 3:6] as target rotation displacements
     rot_actions = delta_pose[:, 3:6]
-    angle = torch.linalg.vector_norm(rot_actions, dim=1)
+    angle = torch.norm(rot_actions, dim=1)
     axis = rot_actions / angle.unsqueeze(-1)
     # change from axis-angle to quat convention
     identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(num_poses, 1)
@@ -1141,7 +1141,7 @@ def orthogonalize_perspective_depth(depth: torch.Tensor, intrinsics: torch.Tenso
     # Create meshgrid of pixel coordinates
     u_grid = torch.arange(im_width, device=depth.device, dtype=depth.dtype)
     v_grid = torch.arange(im_height, device=depth.device, dtype=depth.dtype)
-    u_grid, v_grid = torch.meshgrid(u_grid, v_grid, indexing="xy")
+    v_grid, u_grid = torch.meshgrid(v_grid, u_grid)
 
     # Expand the grids for batch processing
     u_grid = u_grid.unsqueeze(0).expand(perspective_depth_batch.shape[0], -1, -1)
@@ -1232,7 +1232,7 @@ def unproject_depth(depth: torch.Tensor, intrinsics: torch.Tensor, is_ortho: boo
     # create image points in homogeneous coordinates (3, H x W)
     indices_u = torch.arange(im_width, device=depth.device, dtype=depth.dtype)
     indices_v = torch.arange(im_height, device=depth.device, dtype=depth.dtype)
-    img_indices = torch.stack(torch.meshgrid([indices_u, indices_v], indexing="ij"), dim=0).reshape(2, -1)
+    img_indices = torch.stack(torch.meshgrid([indices_u, indices_v]), dim=0).reshape(2, -1)
     pixels = torch.nn.functional.pad(img_indices, (0, 0, 0, 1), mode="constant", value=1.0)
     pixels = pixels.unsqueeze(0)  # (3, H x W) -> (1, 3, H x W)
 
@@ -1366,7 +1366,7 @@ def random_yaw_orientation(num: int, device: str) -> torch.Tensor:
     """
     roll = torch.zeros(num, dtype=torch.float, device=device)
     pitch = torch.zeros(num, dtype=torch.float, device=device)
-    yaw = 2 * torch.pi * torch.rand(num, dtype=torch.float, device=device)
+    yaw = 2 * math.pi * torch.rand(num, dtype=torch.float, device=device)
 
     return quat_from_euler_xyz(roll, pitch, yaw)
 
@@ -1491,7 +1491,7 @@ def sample_cylinder(
         Sampled tensor. Shape is :obj:`(*size, 3)`.
     """
     # sample angles
-    angles = (torch.rand(size, device=device) * 2 - 1) * torch.pi
+    angles = (torch.rand(size, device=device) * 2 - 1) * math.pi
     h_min, h_max = h_range
     # add shape
     if isinstance(size, int):
