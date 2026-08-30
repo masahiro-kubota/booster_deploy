@@ -79,3 +79,22 @@ register_task("k1_walk", K1WalkControllerCfg1())
 register_task("k1_velocity_flat_std", K1VelocityFlatStdControllerCfg())
 register_task(
     "t1_walk", T1WalkControllerCfg1())
+
+
+@configclass
+class K1CostumeHead2982gControllerCfg(K1WalkControllerCfg1):
+    """ピカチュウ外装(頭部2,982 g)込みで再学習した歩行方策。
+
+    基底は k1_walk と同じ K1WalkControllerCfg1 にする。学習環境
+    Booster-K1-Locomotion-v0 の action_scale は K1_WALK_ACTION_SCALE=0.25 の
+    スカラーであり、k1_velocity_flat_std が使う関節ごとの
+    0.25*effort_limit/stiffness とは別物。基底を取り違えると指令が
+    2倍以上になり、方策が正しくても即転倒する。
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.policy.checkpoint_path = "models/k1_costume_head2982g.pt"
+
+
+register_task("k1_costume_head2982g", K1CostumeHead2982gControllerCfg())
